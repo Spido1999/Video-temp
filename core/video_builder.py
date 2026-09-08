@@ -7,6 +7,8 @@ import os
 import subprocess
 from typing import Optional
 
+from core.ffmpeg_bin import FFMPEG_BIN
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 
@@ -25,7 +27,7 @@ def build_segment_clip(media_path: str, duration: float, width: int, height: int
 
     if _is_image(media_path):
         cmd = [
-            "ffmpeg", "-y", "-loop", "1", "-i", media_path,
+            FFMPEG_BIN, "-y", "-loop", "1", "-i", media_path,
             "-t", f"{duration:.3f}", "-vf", scale_filter,
             "-an", "-pix_fmt", "yuv420p", "-c:v", "libx264", out_path,
         ]
@@ -33,7 +35,7 @@ def build_segment_clip(media_path: str, duration: float, width: int, height: int
         # -stream_loop -1 repeats the input so clips shorter than the slot still
         # fill it; the -t cut below trims longer clips down to size.
         cmd = [
-            "ffmpeg", "-y", "-stream_loop", "-1", "-i", media_path,
+            FFMPEG_BIN, "-y", "-stream_loop", "-1", "-i", media_path,
             "-t", f"{duration:.3f}", "-vf", scale_filter,
             "-an", "-pix_fmt", "yuv420p", "-c:v", "libx264", out_path,
         ]
@@ -46,7 +48,7 @@ def concat_clips(clip_paths: list[str], out_path: str, work_dir: str) -> None:
         for p in clip_paths:
             f.write(f"file '{os.path.abspath(p)}'\n")
     cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
+        FFMPEG_BIN, "-y", "-f", "concat", "-safe", "0", "-i", list_file,
         "-c", "copy", out_path,
     ]
     subprocess.run(cmd, check=True, capture_output=True)
@@ -56,12 +58,12 @@ def mux_audio(silent_video_path: str, audio_path: Optional[str], out_path: str,
               total_duration: float) -> None:
     if not audio_path:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", silent_video_path, "-c", "copy", out_path],
+            [FFMPEG_BIN, "-y", "-i", silent_video_path, "-c", "copy", out_path],
             check=True, capture_output=True,
         )
         return
     cmd = [
-        "ffmpeg", "-y",
+        FFMPEG_BIN, "-y",
         "-i", silent_video_path,
         "-stream_loop", "-1", "-i", audio_path,
         "-map", "0:v:0", "-map", "1:a:0",

@@ -4,6 +4,7 @@ structure (same slot durations, same music).
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from typing import Optional
@@ -11,6 +12,8 @@ from typing import Optional
 import cv2
 from scenedetect import SceneManager, open_video
 from scenedetect.detectors import ContentDetector
+
+from core.ffmpeg_bin import FFMPEG_BIN
 
 
 @dataclass
@@ -49,22 +52,14 @@ def get_video_info(video_path: str) -> VideoInfo:
 
 def extract_audio(video_path: str, out_audio_path: str) -> Optional[str]:
     """Extract the audio track to out_audio_path (AAC). Returns None if the
-    source clip has no audio stream at all."""
-    probe = subprocess.run(
-        [
-            "ffprobe", "-v", "error", "-select_streams", "a",
-            "-show_entries", "stream=index", "-of", "csv=p=0", video_path,
-        ],
-        capture_output=True, text=True,
-    )
-    if not probe.stdout.strip():
-        return None
-
+    source clip has no audio stream at all (or ffmpeg otherwise can't extract one)."""
     cmd = [
-        "ffmpeg", "-y", "-i", video_path,
+        FFMPEG_BIN, "-y", "-i", video_path,
         "-vn", "-acodec", "aac", "-b:a", "192k", out_audio_path,
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 or not os.path.exists(out_audio_path):
+        return None
     return out_audio_path
 
 

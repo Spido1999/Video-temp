@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import yt_dlp
 
+from core.ffmpeg_bin import FFMPEG_BIN
+
 
 @dataclass
 class DownloadResult:
@@ -26,6 +28,7 @@ def download_reel(url: str, out_dir: str) -> DownloadResult:
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "ffmpeg_location": FFMPEG_BIN,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)

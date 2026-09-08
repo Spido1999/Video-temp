@@ -17,8 +17,8 @@ Paste an Instagram Reel link, and this app will:
 | Step | File | What it does |
 |---|---|---|
 | Download | `core/downloader.py` | Uses `yt-dlp` to fetch the reel's video file. |
-| Analyze | `core/template_extractor.py` | Uses OpenCV + PySceneDetect to find scene-cut timings, and `ffmpeg` to extract the audio track. |
-| Build | `core/video_builder.py` | Uses `ffmpeg` to trim/loop/scale your uploaded media to each segment's duration, concatenates the segments, then re-attaches the extracted audio. |
+| Analyze | `core/template_extractor.py` | Uses OpenCV + PySceneDetect to find scene-cut timings, and a bundled `ffmpeg` binary to extract the audio track. |
+| Build | `core/video_builder.py` | Uses the bundled `ffmpeg` binary to trim/loop/scale your uploaded media to each segment's duration, concatenates the segments, then re-attaches the extracted audio. |
 | AI (optional) | `core/ai_assist.py` | Uses the OpenAI API (GPT-4o-mini vision) to (a) merge false-positive scene cuts and (b) auto-match your uploaded clips to the best-fitting segment. |
 | UI | `app.py` | Streamlit app tying it all together. |
 
@@ -49,12 +49,10 @@ deployment, use the platform's secrets manager:
 
 ## Run locally
 
-Requires Python 3.10+ and `ffmpeg`/`ffprobe` on your `PATH`.
+Requires Python 3.10+. `ffmpeg` itself is **not** required on your system —
+the `imageio-ffmpeg` package (in `requirements.txt`) bundles a static binary.
 
 ```powershell
-# Windows: install ffmpeg first, e.g. via winget
-winget install --id Gyan.FFmpeg -e
-
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -71,9 +69,9 @@ Open the URL Streamlit prints (usually http://localhost:8501).
 1. Push this folder to a public (or private) GitHub repo.
 2. Go to https://share.streamlit.io → **New app** → pick your repo/branch and
    set the main file to `app.py`.
-3. Streamlit Cloud automatically reads `requirements.txt` for Python packages
-   and `packages.txt` for system packages — `packages.txt` already lists
-   `ffmpeg` so it gets installed on the server.
+3. Streamlit Cloud reads `requirements.txt` for Python packages — that's all
+   that's needed; there's no `packages.txt`/apt step, so it isn't affected by
+   the base image's Debian mirror issues.
 4. Deploy. You'll get a free `*.streamlit.app` URL with the UI live.
 
 Notes:
@@ -83,8 +81,7 @@ Notes:
 ### Option B — Hugging Face Spaces (Streamlit SDK)
 
 1. Create a new Space at https://huggingface.co/spaces → SDK: **Streamlit**.
-2. Upload/push the same files (`app.py`, `core/`, `requirements.txt`,
-   `packages.txt` — Spaces also honors `packages.txt` for apt packages).
+2. Upload/push the same files (`app.py`, `core/`, `requirements.txt`).
 3. The Space builds and serves the app at a free `*.hf.space` URL.
 
 Both options are free, git-based, and need no server management.
@@ -98,8 +95,8 @@ core/
   template_extractor.py     # scene/segment detection + audio extraction
   video_builder.py           # ffmpeg-based clip building, concat, audio mux
   ai_assist.py                # optional OpenAI-powered refinement + matching
-requirements.txt          # Python deps
-packages.txt              # apt deps for hosted deployments (ffmpeg)
+  ffmpeg_bin.py                # resolves the bundled static ffmpeg binary
+requirements.txt          # Python deps (includes imageio-ffmpeg, no system ffmpeg needed)
 ```
 
 ## Push to GitHub
