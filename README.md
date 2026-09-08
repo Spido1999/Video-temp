@@ -19,7 +19,33 @@ Paste an Instagram Reel link, and this app will:
 | Download | `core/downloader.py` | Uses `yt-dlp` to fetch the reel's video file. |
 | Analyze | `core/template_extractor.py` | Uses OpenCV + PySceneDetect to find scene-cut timings, and `ffmpeg` to extract the audio track. |
 | Build | `core/video_builder.py` | Uses `ffmpeg` to trim/loop/scale your uploaded media to each segment's duration, concatenates the segments, then re-attaches the extracted audio. |
+| AI (optional) | `core/ai_assist.py` | Uses the OpenAI API (GPT-4o-mini vision) to (a) merge false-positive scene cuts and (b) auto-match your uploaded clips to the best-fitting segment. |
 | UI | `app.py` | Streamlit app tying it all together. |
+
+## Optional AI enhancements
+
+Expand **"🤖 AI enhancements"** in the app and paste an OpenAI API key to unlock:
+
+- **Refine scene detection with AI** — sends a thumbnail of each detected segment
+  to GPT-4o-mini and merges boundaries that look like the same continuous shot
+  falsely split by camera shake/flash/motion, instead of a real cut.
+- **Auto-match my uploaded clips to segments with AI** — upload a pool of your
+  clips/photos (instead of one per slot) and GPT-4o-mini assigns each one to
+  the segment it visually fits best (subject/framing/color/mood). You can still
+  override any assignment manually afterward.
+
+Both features are pure enhancements: if the API key is missing or a call
+fails, the app falls back to the plain scene-detection/manual-upload flow
+automatically — nothing breaks.
+
+**Never commit an API key.** For local runs, paste it into the app's password
+field each session (kept only in memory, never written to disk). For a hosted
+deployment, use the platform's secrets manager:
+
+- Streamlit Community Cloud: App settings → **Secrets** → add
+  `OPENAI_API_KEY = "sk-..."`. The app reads it automatically via `st.secrets`.
+- Hugging Face Spaces: Space settings → **Repository secrets** → add
+  `OPENAI_API_KEY`.
 
 ## Run locally
 
@@ -71,9 +97,21 @@ core/
   downloader.py            # Instagram reel download (yt-dlp)
   template_extractor.py     # scene/segment detection + audio extraction
   video_builder.py           # ffmpeg-based clip building, concat, audio mux
+  ai_assist.py                # optional OpenAI-powered refinement + matching
 requirements.txt          # Python deps
 packages.txt              # apt deps for hosted deployments (ffmpeg)
 ```
+
+## Push to GitHub
+
+```powershell
+git remote add origin https://github.com/<your-username>/<your-repo>.git
+git branch -M main
+git push -u origin main
+```
+
+Then point Streamlit Community Cloud / Hugging Face Spaces at that repo (see
+"Free hosting" above).
 
 ## Limitations
 
