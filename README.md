@@ -3,10 +3,12 @@
 Paste an Instagram Reel link, and this app will:
 
 1. Download the reel and pull out its **background music** and the **timing of
-   each visual segment** (scene cuts) — this is the "template".
-2. Let you upload your **own videos/photos**, one per segment slot.
-3. Render a **final video** that follows the same segment timing and reuses the
-   original music, but with your media instead of the original clips.
+   each visual segment** (scene cuts), including a guess at each segment's
+   **pacing** (normal / slow-motion / sped-up) — this is the "template".
+2. Let you upload your **own videos/photos**, one per segment slot, with control
+   over playback speed and which part of a longer clip to use.
+3. Render a **final video** that follows the same segment timing and pacing and
+   reuses the original music, but with your media instead of the original clips.
 
 > ⚠️ Only use reels you own or have permission to reuse. Respect Instagram's
 > Terms of Use and the original creator's rights — this tool is for personal/
@@ -17,9 +19,9 @@ Paste an Instagram Reel link, and this app will:
 | Step | File | What it does |
 |---|---|---|
 | Download | `core/downloader.py` | Uses `yt-dlp` to fetch the reel's video file. |
-| Analyze | `core/template_extractor.py` | Uses PyAV to decode frames and a NumPy frame-diff to find scene-cut timings, and a bundled `ffmpeg` binary to extract the audio track. |
-| Build | `core/video_builder.py` | Uses the bundled `ffmpeg` binary to trim/loop/scale your uploaded media to each segment's duration, concatenates the segments, then re-attaches the extracted audio. |
-| AI (optional) | `core/ai_assist.py` | Uses the OpenAI API (GPT-4o-mini vision) to (a) merge false-positive scene cuts and (b) auto-match your uploaded clips to the best-fitting segment. |
+| Analyze | `core/template_extractor.py` | Uses PyAV to decode frames and a NumPy frame-diff to find scene-cut timings and each segment's apparent pacing (slow-motion/normal/sped-up), and a bundled `ffmpeg` binary to extract the audio track. |
+| Build | `core/video_builder.py` | Uses the bundled `ffmpeg` binary to trim/loop/scale your uploaded media to each segment's duration and pacing, concatenates the segments, then re-attaches the extracted audio. |
+| AI (optional) | `core/ai_assist.py` | Uses the OpenAI API (GPT-4o-mini vision) to (a) merge false-positive scene cuts, (b) auto-match your uploaded clips to the best-fitting segment, and (c) judge each segment's slow-motion/sped-up pacing more accurately than the built-in guess. |
 | UI | `app.py` | Streamlit app tying it all together. |
 
 ## Optional AI enhancements
@@ -33,6 +35,10 @@ Expand **"🤖 AI enhancements"** in the app and paste an OpenAI API key to unlo
   clips/photos (instead of one per slot) and GPT-4o-mini assigns each one to
   the segment it visually fits best (subject/framing/color/mood). You can still
   override any assignment manually afterward.
+- **Detect slow-motion/fast-motion pacing with AI** — looks at each segment's
+  start/end frames and judges whether it's slow-motion, sped-up, or normal more
+  reliably than the built-in pixel-diff heuristic. Either way, every segment's
+  detected pacing is shown as an editable slider before rendering.
 
 Both features are pure enhancements: if the API key is missing or a call
 fails, the app falls back to the plain scene-detection/manual-upload flow

@@ -1,9 +1,15 @@
 import os
 import tempfile
+from dataclasses import replace
 
 import streamlit as st
 
-from core.ai_assist import AIAssistError, match_clips_to_segments_ai, refine_segments_ai
+from core.ai_assist import (
+    AIAssistError,
+    classify_speed_ai,
+    match_clips_to_segments_ai,
+    refine_segments_ai,
+)
 from core.downloader import download_reel
 from core.template_extractor import detect_segments, extract_audio, get_video_info
 from core.video_builder import build_final_video
@@ -42,8 +48,13 @@ with st.expander("🤖 AI enhancements (optional, needs an OpenAI API key)"):
         "Auto-match my uploaded clips to segments with AI",
         value=False, disabled=not api_key,
     )
+    speed_with_ai = st.checkbox(
+        "Detect slow-motion/fast-motion pacing with AI (more accurate than the built-in guess)",
+        value=False, disabled=not api_key,
+    )
     st.session_state.refine_with_ai = refine_with_ai
     st.session_state.automatch_with_ai = automatch_with_ai
+    st.session_state.speed_with_ai = speed_with_ai
 
 st.header("1. Fetch the template")
 url = st.text_input("Instagram Reel URL", placeholder="https://www.instagram.com/reel/xxxxxxxxx/")
@@ -70,6 +81,17 @@ if st.button("Download & analyze", type="primary", disabled=not url):
                 segments = refine_segments_ai(st.session_state.openai_api_key, result.video_path, segments)
             except AIAssistError as exc:
                 st.warning(f"AI scene refinement skipped, using raw scene detection: {exc}")
+
+        if st.session_state.get("speed_with_ai") and st.session_state.get("openai_api_key"):
+            try:
+                speed_results = classify_speed_ai(st.session_state.openai_api_key, result.video_path, segments)
+                segments = [
+                    replace(seg, speed=speed_results[seg.index][1], speed_label=speed_results[seg.index][0])
+                    if seg.index in speed_results else seg
+                    for seg in segments
+                ]
+            except AIAssistError as exc:
+                st.warning(f"AI pacing detection skipped, using the built-in guess: {exc}")
 
     st.session_state.template = {
         "video_path": result.video_path,
@@ -132,8 +154,11 @@ if template:
                 st.write(f"- Segment {seg.index + 1}: {os.path.basename(path) if path else '— unmatched —'}")
 
     st.caption("Manual — upload/replace media for any segment individually. Shorter clips are looped, longer ones trimmed to fit.")
+    speed_overrides: dict = st.session_state.get("speed_overrides", {})
+    start_offsets: dict = st.session_state.get("start_offsets", {})
     for seg in segments:
-        file = st.file_uploader(
+        cols = st.columns([3, 2])
+        file = cols[0].file_uploader(
             f"Segment {seg.index + 1} — {seg.duration:.1f}s",
             type=["mp4", "mov", "m4v", "jpg", "jpeg", "png", "webp"],
             key=f"upload_{seg.index}",
@@ -143,26 +168,46 @@ if template:
             with open(dest, "wb") as f:
                 f.write(file.getbuffer())
             uploads[seg.index] = dest
+
+        is_video_upload = file is not None and not file.name.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+        pacing_icon = {"slow-motion": "🐢", "fast": "⚡"}.get(seg.speed_label, "▶️")
+        speed_overrides[seg.index] = cols[1].slider(
+            f"Pacing {pacing_icon} ({seg.speed_label})", min_value=0.25, max_value=3.0, step=0.25,
+            value=speed_overrides.get(seg.index, seg.speed), key=f"speed_{seg.index}",
+        )
+        if is_video_upload:
+            start_offsets[seg.index] = cols[1].number_input(
+                "Start offset in your clip (s)", min_value=0.0, step=0.5,
+                value=start_offsets.get(seg.index, 0.0), key=f"offset_{seg.index}",
+            )
     st.session_state.uploads = uploads
+    st.session_state.speed_overrides = speed_overrides
+    st.session_state.start_offsets = start_offsets
 
     st.header("3. Generate")
     ready = len(uploads) > 0
     if st.button("Render final video", type="primary", disabled=not ready):
-        with st.spinner("Rendering..."):
-            try:
-                out_path = build_final_video(
-                    segment_media=uploads,
-                    segments=segments,
-                    width=info.width,
-                    height=info.height,
-                    fps=info.fps,
-                    audio_path=template["audio_path"],
-                    out_path=os.path.join(WORK_DIR, "final_output.mp4"),
-                    work_dir=WORK_DIR,
-                )
-                st.session_state.output_path = out_path
-            except Exception as exc:
-                st.error(f"Rendering failed: {exc}")
+        render_segments = [replace(seg, speed=speed_overrides.get(seg.index, seg.speed)) for seg in segments]
+        progress_bar = st.progress(0.0, text="Rendering...")
+        try:
+            out_path = build_final_video(
+                segment_media=uploads,
+                segments=render_segments,
+                width=info.width,
+                height=info.height,
+                fps=info.fps,
+                audio_path=template["audio_path"],
+                out_path=os.path.join(WORK_DIR, "final_output.mp4"),
+                work_dir=WORK_DIR,
+                start_offsets=start_offsets,
+                progress_cb=lambda done, total: progress_bar.progress(
+                    done / total, text=f"Rendering segment {done}/{total}..."
+                ),
+            )
+            st.session_state.output_path = out_path
+            progress_bar.progress(1.0, text="Done!")
+        except Exception as exc:
+            st.error(f"Rendering failed: {exc}")
 
 if st.session_state.get("output_path"):
     st.header("Result")

@@ -124,8 +124,14 @@ def refine_segments_ai(api_key: str, video_path: str, segments: list) -> list:
             merged.append(segments[i])
         else:
             prev = merged[-1]
-            merged[-1] = type(prev)(index=prev.index, start=prev.start, end=segments[i].end)
-    return [type(seg)(index=new_idx, start=seg.start, end=seg.end) for new_idx, seg in enumerate(merged)]
+            merged[-1] = type(prev)(
+                index=prev.index, start=prev.start, end=segments[i].end,
+                speed=prev.speed, speed_label=prev.speed_label,
+            )
+    return [
+        type(seg)(index=new_idx, start=seg.start, end=seg.end, speed=seg.speed, speed_label=seg.speed_label)
+        for new_idx, seg in enumerate(merged)
+    ]
 
 
 def match_clips_to_segments_ai(api_key: str, video_path: str, segments: list,
@@ -183,3 +189,63 @@ def match_clips_to_segments_ai(api_key: str, video_path: str, segments: list,
         assignments[seg_idx] = clip_paths[clip_idx]
         used_clips.add(clip_idx)
     return assignments
+
+
+def classify_speed_ai(api_key: str, video_path: str, segments: list) -> dict[int, tuple[str, float]]:
+    """Ask GPT-4o-mini to judge each segment's apparent playback pacing (slow-motion,
+    normal, or sped-up/timelapse) from its start/end frames, using motion blur and how
+    much changes between them relative to the duration. Returns
+    {segment_index: (label, multiplier)}; segments GPT couldn't judge are omitted."""
+    if not segments:
+        return {}
+
+    client = _client(api_key)
+    times: list[float] = []
+    for seg in segments:
+        times.append(seg.start + 0.15 * seg.duration)
+        times.append(seg.start + 0.85 * seg.duration)
+    frames = _grab_frames_at(video_path, times)
+
+    content = [{
+        "type": "text",
+        "text": (
+            "For each video segment below, you'll see two frames: one near its start "
+            "and one near its end, plus its duration. Judge whether the segment looks "
+            "like it plays in slow-motion, is sped-up/timelapse, or is normal speed, "
+            "based on motion blur and how much changes between the two frames relative "
+            "to the duration. "
+            'Respond ONLY with JSON: {"speeds": {"<segment_index>": '
+            '{"label": "slow-motion|normal|fast", "multiplier": <float>}}}, '
+            "where multiplier is a suggested playback-speed factor for replacement "
+            "footage (e.g. 0.5 for slow-motion, 1.0 for normal, 1.75 for fast/sped-up)."
+        ),
+    }]
+    for i, seg in enumerate(segments):
+        content.append({"type": "text", "text": f"Segment {seg.index}: {seg.duration:.2f}s, start frame"})
+        content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(frames[i * 2])}})
+        content.append({"type": "text", "text": f"Segment {seg.index}: end frame"})
+        content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(frames[i * 2 + 1])}})
+
+    try:
+        resp = client.chat.completions.create(
+            model=_VISION_MODEL,
+            messages=[{"role": "user", "content": content}],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        raw = json.loads(resp.choices[0].message.content)["speeds"]
+    except Exception as exc:
+        raise AIAssistError(f"AI speed classification failed: {exc}") from exc
+
+    valid_indices = {seg.index for seg in segments}
+    results: dict[int, tuple[str, float]] = {}
+    for seg_idx_str, entry in raw.items():
+        try:
+            seg_idx = int(seg_idx_str)
+            label = str(entry["label"])
+            multiplier = max(0.1, min(4.0, float(entry["multiplier"])))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if seg_idx in valid_indices:
+            results[seg_idx] = (label, multiplier)
+    return results
