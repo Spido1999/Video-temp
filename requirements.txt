@@ -1,0 +1,6 @@
+streamlit>=1.32
+yt-dlp>=2024.4.9
+scenedetect[opencv]>=0.6.3
+opencv-python-headless>=4.9
+numpy>=1.26
+openai>=1.30
