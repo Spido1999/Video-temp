@@ -21,22 +21,27 @@ Paste an Instagram Reel link, and this app will:
 | Download | `core/downloader.py` | Uses `yt-dlp` to fetch the reel's video file. |
 | Analyze | `core/template_extractor.py` | Uses PyAV to decode frames and a NumPy frame-diff to find scene-cut timings and each segment's apparent pacing (slow-motion/normal/sped-up), and a bundled `ffmpeg` binary to extract the audio track. |
 | Build | `core/video_builder.py` | Uses the bundled `ffmpeg` binary to trim/loop/scale your uploaded media to each segment's duration and pacing, concatenates the segments, then re-attaches the extracted audio. |
-| AI (optional) | `core/ai_assist.py` | Uses the OpenAI API (GPT-4o-mini vision) to (a) merge false-positive scene cuts, (b) auto-match your uploaded clips to the best-fitting segment, and (c) judge each segment's slow-motion/sped-up pacing more accurately than the built-in guess. |
+| AI (optional) | `core/ai_assist.py` | Uses the OpenAI API (a selectable GPT vision model) to (a) merge false-positive scene cuts, (b) auto-match your uploaded clips to the best-fitting segment, and (c) judge each segment's slow-motion/sped-up pacing more accurately than the built-in guess. |
 | UI | `app.py` | Streamlit app tying it all together. |
 
 ## Optional AI enhancements
 
 Expand **"🤖 AI enhancements"** in the app and paste an OpenAI API key to unlock:
 
+- **AI vision model** picker — OpenAI has no separate "watch the video" model;
+  every vision-capable model (and this app) works by analyzing sampled frames.
+  Choose `gpt-4o-mini` (fast/cheap, default), `gpt-4o` (more accurate), or
+  `gpt-4.1` (newer, strong multimodal reasoning) depending on how much accuracy
+  vs. speed/cost you want. All three AI features below use whichever model you pick.
 - **Refine scene detection with AI** — sends a thumbnail of each detected segment
-  to GPT-4o-mini and merges boundaries that look like the same continuous shot
+  to GPT and merges boundaries that look like the same continuous shot
   falsely split by camera shake/flash/motion, instead of a real cut.
 - **Auto-match my uploaded clips to segments with AI** — upload a pool of your
-  clips/photos (instead of one per slot) and GPT-4o-mini assigns each one to
+  clips/photos (instead of one per slot) and GPT assigns each one to
   the segment it visually fits best (subject/framing/color/mood). You can still
   override any assignment manually afterward.
 - **Detect slow-motion/fast-motion pacing with AI** — looks at each segment's
-  start/end frames and judges whether it's slow-motion, sped-up, or normal more
+  start/mid/end frames and judges whether it's slow-motion, sped-up, or normal more
   reliably than the built-in pixel-diff heuristic. Either way, every segment's
   detected pacing is shown as an editable slider before rendering.
 

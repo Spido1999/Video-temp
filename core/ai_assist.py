@@ -17,7 +17,13 @@ from PIL import Image
 
 from core.video_builder import IMAGE_EXTS
 
-_VISION_MODEL = "gpt-4o-mini"
+DEFAULT_VISION_MODEL = "gpt-4o-mini"
+# Roughly in order of increasing accuracy/cost; gpt-4o-mini is fastest & cheapest.
+AVAILABLE_VISION_MODELS = {
+    "Fast & cheap (gpt-4o-mini)": "gpt-4o-mini",
+    "More accurate (gpt-4o)": "gpt-4o",
+    "Newer, strong reasoning (gpt-4.1)": "gpt-4.1",
+}
 
 
 class AIAssistError(RuntimeError):
@@ -79,8 +85,14 @@ def _frame_to_data_uri(image: Image.Image) -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
-def refine_segments_ai(api_key: str, video_path: str, segments: list) -> list:
-    """Ask GPT-4o-mini to look at each segment's thumbnail and merge boundaries
+def _image_content(image: Image.Image) -> dict:
+    # detail="high" lets the model examine finer detail per frame (more accurate,
+    # slightly more expensive) instead of the low-res default.
+    return {"type": "image_url", "image_url": {"url": _frame_to_data_uri(image), "detail": "high"}}
+
+
+def refine_segments_ai(api_key: str, video_path: str, segments: list, model: str = DEFAULT_VISION_MODEL) -> list:
+    """Ask a GPT vision model to look at each segment's thumbnail and merge boundaries
     that are false-positive cuts (camera shake, flash, tiny motion) rather than
     genuine scene changes."""
     if len(segments) < 2:
@@ -103,11 +115,11 @@ def refine_segments_ai(api_key: str, video_path: str, segments: list) -> list:
     }]
     for seg, frame in zip(segments, frames):
         content.append({"type": "text", "text": f"Segment {seg.index}: {seg.duration:.2f}s"})
-        content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}})
+        content.append(_image_content(frame))
 
     try:
         resp = client.chat.completions.create(
-            model=_VISION_MODEL,
+            model=model,
             messages=[{"role": "user", "content": content}],
             response_format={"type": "json_object"},
             temperature=0,
@@ -135,8 +147,8 @@ def refine_segments_ai(api_key: str, video_path: str, segments: list) -> list:
 
 
 def match_clips_to_segments_ai(api_key: str, video_path: str, segments: list,
-                                clip_paths: list[str]) -> dict[int, str]:
-    """Ask GPT-4o-mini to assign each uploaded clip to the template segment it
+                                clip_paths: list[str], model: str = DEFAULT_VISION_MODEL) -> dict[int, str]:
+    """Ask a GPT vision model to assign each uploaded clip to the template segment it
     visually fits best (subject, framing, color, mood). Returns
     {segment_index: clip_path}; segments with no good match are omitted."""
     if not clip_paths:
@@ -158,14 +170,14 @@ def match_clips_to_segments_ai(api_key: str, video_path: str, segments: list,
     }]
     for seg, frame in zip(segments, seg_frames):
         content.append({"type": "text", "text": f"S{seg.index} (slot, {seg.duration:.2f}s)"})
-        content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}})
+        content.append(_image_content(frame))
     for i, path in enumerate(clip_paths):
         content.append({"type": "text", "text": f"C{i} (user clip)"})
-        content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(_thumbnail(path))}})
+        content.append(_image_content(_thumbnail(path)))
 
     try:
         resp = client.chat.completions.create(
-            model=_VISION_MODEL,
+            model=model,
             messages=[{"role": "user", "content": content}],
             response_format={"type": "json_object"},
             temperature=0,
@@ -191,29 +203,30 @@ def match_clips_to_segments_ai(api_key: str, video_path: str, segments: list,
     return assignments
 
 
-def classify_speed_ai(api_key: str, video_path: str, segments: list) -> dict[int, tuple[str, float]]:
-    """Ask GPT-4o-mini to judge each segment's apparent playback pacing (slow-motion,
-    normal, or sped-up/timelapse) from its start/end frames, using motion blur and how
-    much changes between them relative to the duration. Returns
-    {segment_index: (label, multiplier)}; segments GPT couldn't judge are omitted."""
+def classify_speed_ai(api_key: str, video_path: str, segments: list,
+                       model: str = DEFAULT_VISION_MODEL) -> dict[int, tuple[str, float]]:
+    """Ask a GPT vision model to judge each segment's apparent playback pacing
+    (slow-motion, normal, or sped-up/timelapse) from its start/mid/end frames, using
+    motion blur and how much changes between them relative to the duration. Returns
+    {segment_index: (label, multiplier)}; segments it couldn't judge are omitted."""
     if not segments:
         return {}
 
     client = _client(api_key)
     times: list[float] = []
     for seg in segments:
-        times.append(seg.start + 0.15 * seg.duration)
-        times.append(seg.start + 0.85 * seg.duration)
+        times.append(seg.start + 0.1 * seg.duration)
+        times.append(seg.start + 0.5 * seg.duration)
+        times.append(seg.start + 0.9 * seg.duration)
     frames = _grab_frames_at(video_path, times)
 
     content = [{
         "type": "text",
         "text": (
-            "For each video segment below, you'll see two frames: one near its start "
-            "and one near its end, plus its duration. Judge whether the segment looks "
-            "like it plays in slow-motion, is sped-up/timelapse, or is normal speed, "
-            "based on motion blur and how much changes between the two frames relative "
-            "to the duration. "
+            "For each video segment below, you'll see three frames (start, middle, "
+            "end), plus its duration. Judge whether the segment looks like it plays "
+            "in slow-motion, is sped-up/timelapse, or is normal speed, based on motion "
+            "blur and how much changes between the frames relative to the duration. "
             'Respond ONLY with JSON: {"speeds": {"<segment_index>": '
             '{"label": "slow-motion|normal|fast", "multiplier": <float>}}}, '
             "where multiplier is a suggested playback-speed factor for replacement "
@@ -222,13 +235,15 @@ def classify_speed_ai(api_key: str, video_path: str, segments: list) -> dict[int
     }]
     for i, seg in enumerate(segments):
         content.append({"type": "text", "text": f"Segment {seg.index}: {seg.duration:.2f}s, start frame"})
-        content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(frames[i * 2])}})
+        content.append(_image_content(frames[i * 3]))
+        content.append({"type": "text", "text": f"Segment {seg.index}: middle frame"})
+        content.append(_image_content(frames[i * 3 + 1]))
         content.append({"type": "text", "text": f"Segment {seg.index}: end frame"})
-        content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(frames[i * 2 + 1])}})
+        content.append(_image_content(frames[i * 3 + 2]))
 
     try:
         resp = client.chat.completions.create(
-            model=_VISION_MODEL,
+            model=model,
             messages=[{"role": "user", "content": content}],
             response_format={"type": "json_object"},
             temperature=0,

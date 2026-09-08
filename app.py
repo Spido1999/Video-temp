@@ -6,6 +6,7 @@ import streamlit as st
 
 from core.ai_assist import (
     AIAssistError,
+    AVAILABLE_VISION_MODELS,
     classify_speed_ai,
     match_clips_to_segments_ai,
     refine_segments_ai,
@@ -40,6 +41,13 @@ with st.expander("🤖 AI enhancements (optional, needs an OpenAI API key)"):
         help="Used only for this session to call OpenAI; never written to disk.",
     )
     st.session_state.openai_api_key = api_key
+    vision_model_choice = st.selectbox(
+        "AI vision model", options=list(AVAILABLE_VISION_MODELS.keys()),
+        help="OpenAI has no dedicated 'video' model — it (and this app) works by "
+             "analyzing sampled frames. Pick a stronger model here for more accurate "
+             "(but slower/pricier) results.",
+    )
+    st.session_state.vision_model = AVAILABLE_VISION_MODELS[vision_model_choice]
     refine_with_ai = st.checkbox(
         "Refine scene detection with AI (merges false-positive cuts)",
         value=False, disabled=not api_key,
@@ -78,13 +86,19 @@ if st.button("Download & analyze", type="primary", disabled=not url):
 
         if st.session_state.get("refine_with_ai") and st.session_state.get("openai_api_key"):
             try:
-                segments = refine_segments_ai(st.session_state.openai_api_key, result.video_path, segments)
+                segments = refine_segments_ai(
+                    st.session_state.openai_api_key, result.video_path, segments,
+                    model=st.session_state.vision_model,
+                )
             except AIAssistError as exc:
                 st.warning(f"AI scene refinement skipped, using raw scene detection: {exc}")
 
         if st.session_state.get("speed_with_ai") and st.session_state.get("openai_api_key"):
             try:
-                speed_results = classify_speed_ai(st.session_state.openai_api_key, result.video_path, segments)
+                speed_results = classify_speed_ai(
+                    st.session_state.openai_api_key, result.video_path, segments,
+                    model=st.session_state.vision_model,
+                )
                 segments = [
                     replace(seg, speed=speed_results[seg.index][1], speed_label=speed_results[seg.index][0])
                     if seg.index in speed_results else seg
@@ -141,7 +155,10 @@ if template:
         if st.button("Run AI auto-match", disabled=not pool_paths):
             with st.spinner("Matching your clips to segments..."):
                 try:
-                    uploads = match_clips_to_segments_ai(api_key, template["video_path"], segments, pool_paths)
+                    uploads = match_clips_to_segments_ai(
+                        api_key, template["video_path"], segments, pool_paths,
+                        model=st.session_state.vision_model,
+                    )
                     st.session_state.uploads = uploads
                     st.success(f"AI matched {len(uploads)} of {len(segments)} segment(s).")
                 except AIAssistError as exc:
