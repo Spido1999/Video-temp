@@ -10,8 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import av
-from scenedetect import SceneManager, open_video
-from scenedetect.detectors import ContentDetector
+import numpy as np
 
 from core.ffmpeg_bin import FFMPEG_BIN
 
@@ -65,22 +64,36 @@ def extract_audio(video_path: str, out_audio_path: str) -> Optional[str]:
     return out_audio_path
 
 
-def detect_segments(video_path: str, min_scene_len_sec: float = 0.6) -> list[Segment]:
-    """Split the reel into visual segments based on scene cuts. Falls back to a
-    single segment spanning the whole clip when no cuts are detected."""
+def detect_segments(video_path: str, min_scene_len_sec: float = 0.6, threshold: float = 30.0) -> list[Segment]:
+    """Split the reel into visual segments by diffing consecutive downsampled
+    frames (a lightweight, dependency-free stand-in for PySceneDetect's
+    ContentDetector). Falls back to a single segment spanning the whole clip
+    when no cuts are found."""
     info = get_video_info(video_path)
-    min_scene_len = max(1, int(min_scene_len_sec * info.fps))
 
-    video = open_video(video_path, backend="pyav")
-    scene_manager = SceneManager()
-    scene_manager.add_detector(ContentDetector(threshold=27.0, min_scene_len=min_scene_len))
-    scene_manager.detect_scenes(video)
-    scene_list = scene_manager.get_scene_list()
+    boundaries: list[float] = []
+    container = av.open(video_path)
+    try:
+        stream = container.streams.video[0]
+        prev_arr = None
+        last_cut_time = 0.0
+        for frame in container.decode(stream):
+            t = float(frame.time) if frame.time is not None else 0.0
+            arr = np.asarray(
+                frame.to_image().convert("RGB").resize((64, 36)), dtype=np.float32
+            )
+            if prev_arr is not None:
+                diff = float(np.abs(arr - prev_arr).mean())
+                if diff > threshold and (t - last_cut_time) >= min_scene_len_sec:
+                    boundaries.append(t)
+                    last_cut_time = t
+            prev_arr = arr
+    finally:
+        container.close()
 
-    if not scene_list:
-        return [Segment(index=0, start=0.0, end=info.duration)]
-
-    segments = []
-    for i, (start_tc, end_tc) in enumerate(scene_list):
-        segments.append(Segment(index=i, start=start_tc.get_seconds(), end=end_tc.get_seconds()))
-    return segments
+    bounds = [0.0] + boundaries + [info.duration]
+    return [
+        Segment(index=i, start=bounds[i], end=bounds[i + 1])
+        for i in range(len(bounds) - 1)
+        if bounds[i + 1] > bounds[i]
+    ] or [Segment(index=0, start=0.0, end=info.duration)]
