@@ -8,10 +8,12 @@ segments / manual per-segment uploads) rather than break the app.
 from __future__ import annotations
 
 import base64
+import io
 import json
 
-import cv2
+import av
 from openai import OpenAI
+from PIL import Image
 
 from core.video_builder import IMAGE_EXTS
 
@@ -32,27 +34,48 @@ def _client(api_key: str) -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
-def _grab_frame(video_path: str, at_seconds: float):
-    cap = cv2.VideoCapture(video_path)
+def _grab_frames_at(video_path: str, times: list[float]) -> list[Image.Image]:
+    """Decode video_path once and return the frame closest to each requested
+    timestamp (order of `times` is preserved in the returned list)."""
+    order = sorted(range(len(times)), key=lambda i: times[i])
+    results: list = [None] * len(times)
+
+    container = av.open(video_path)
     try:
-        cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, at_seconds) * 1000)
-        ok, frame = cap.read()
+        stream = container.streams.video[0]
+        pos = 0
+        last_frame = None
+        for frame in container.decode(stream):
+            t = float(frame.time) if frame.time is not None else 0.0
+            while pos < len(order) and t >= times[order[pos]]:
+                results[order[pos]] = frame.to_image()
+                pos += 1
+            last_frame = frame
+            if pos >= len(order):
+                break
+        if last_frame is not None:
+            for i in range(len(results)):
+                if results[i] is None:
+                    results[i] = last_frame.to_image()
     finally:
-        cap.release()
-    if not ok:
-        raise AIAssistError(f"Could not read a frame at {at_seconds:.2f}s from {video_path}")
-    return frame
+        container.close()
+
+    missing = [i for i, r in enumerate(results) if r is None]
+    if missing:
+        raise AIAssistError(f"Could not decode frames for timestamps: {missing}")
+    return results
 
 
-def _thumbnail(path: str, at_seconds: float = 0.3):
-    return cv2.imread(path) if _is_image(path) else _grab_frame(path, at_seconds)
+def _thumbnail(path: str, at_seconds: float = 0.3) -> Image.Image:
+    if _is_image(path):
+        return Image.open(path).convert("RGB")
+    return _grab_frames_at(path, [at_seconds])[0]
 
 
-def _frame_to_data_uri(frame) -> str:
-    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-    if not ok:
-        raise AIAssistError("Could not encode a frame to JPEG for the AI request.")
-    b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+def _frame_to_data_uri(image: Image.Image) -> str:
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, format="JPEG", quality=70)
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
     return f"data:image/jpeg;base64,{b64}"
 
 
@@ -64,6 +87,8 @@ def refine_segments_ai(api_key: str, video_path: str, segments: list) -> list:
         return segments
 
     client = _client(api_key)
+    mid_times = [seg.start + seg.duration / 2 for seg in segments]
+    frames = _grab_frames_at(video_path, mid_times)
     content = [{
         "type": "text",
         "text": (
@@ -76,8 +101,7 @@ def refine_segments_ai(api_key: str, video_path: str, segments: list) -> list:
             "with exactly (number_of_segments - 1) entries, in order."
         ),
     }]
-    for seg in segments:
-        frame = _grab_frame(video_path, seg.start + seg.duration / 2)
+    for seg, frame in zip(segments, frames):
         content.append({"type": "text", "text": f"Segment {seg.index}: {seg.duration:.2f}s"})
         content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}})
 
@@ -113,6 +137,8 @@ def match_clips_to_segments_ai(api_key: str, video_path: str, segments: list,
         return {}
 
     client = _client(api_key)
+    mid_times = [seg.start + seg.duration / 2 for seg in segments]
+    seg_frames = _grab_frames_at(video_path, mid_times)
     content = [{
         "type": "text",
         "text": (
@@ -124,8 +150,7 @@ def match_clips_to_segments_ai(api_key: str, video_path: str, segments: list,
             "using the 0-based indices shown below."
         ),
     }]
-    for seg in segments:
-        frame = _grab_frame(video_path, seg.start + seg.duration / 2)
+    for seg, frame in zip(segments, seg_frames):
         content.append({"type": "text", "text": f"S{seg.index} (slot, {seg.duration:.2f}s)"})
         content.append({"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}})
     for i, path in enumerate(clip_paths):

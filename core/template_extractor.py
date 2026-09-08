@@ -9,7 +9,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
-import cv2
+import av
 from scenedetect import SceneManager, open_video
 from scenedetect.detectors import ContentDetector
 
@@ -36,17 +36,19 @@ class Segment:
 
 
 def get_video_info(video_path: str) -> VideoInfo:
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Could not open video: {video_path}")
+    container = av.open(video_path)
     try:
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        duration = frame_count / fps if fps else 0.0
+        stream = container.streams.video[0]
+        width, height = stream.width, stream.height
+        fps = float(stream.average_rate) if stream.average_rate else 30.0
+        if stream.duration is not None and stream.time_base is not None:
+            duration = float(stream.duration * stream.time_base)
+        elif container.duration is not None:
+            duration = float(container.duration / av.time_base)
+        else:
+            duration = 0.0
     finally:
-        cap.release()
+        container.close()
     return VideoInfo(width=width, height=height, fps=fps, duration=duration)
 
 
@@ -69,7 +71,7 @@ def detect_segments(video_path: str, min_scene_len_sec: float = 0.6) -> list[Seg
     info = get_video_info(video_path)
     min_scene_len = max(1, int(min_scene_len_sec * info.fps))
 
-    video = open_video(video_path)
+    video = open_video(video_path, backend="pyav")
     scene_manager = SceneManager()
     scene_manager.add_detector(ContentDetector(threshold=27.0, min_scene_len=min_scene_len))
     scene_manager.detect_scenes(video)

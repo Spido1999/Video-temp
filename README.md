@@ -17,7 +17,7 @@ Paste an Instagram Reel link, and this app will:
 | Step | File | What it does |
 |---|---|---|
 | Download | `core/downloader.py` | Uses `yt-dlp` to fetch the reel's video file. |
-| Analyze | `core/template_extractor.py` | Uses OpenCV + PySceneDetect to find scene-cut timings, and a bundled `ffmpeg` binary to extract the audio track. |
+| Analyze | `core/template_extractor.py` | Uses PyAV + PySceneDetect to find scene-cut timings, and a bundled `ffmpeg` binary to extract the audio track. |
 | Build | `core/video_builder.py` | Uses the bundled `ffmpeg` binary to trim/loop/scale your uploaded media to each segment's duration, concatenates the segments, then re-attaches the extracted audio. |
 | AI (optional) | `core/ai_assist.py` | Uses the OpenAI API (GPT-4o-mini vision) to (a) merge false-positive scene cuts and (b) auto-match your uploaded clips to the best-fitting segment. |
 | UI | `app.py` | Streamlit app tying it all together. |
